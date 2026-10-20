@@ -1,0 +1,9 @@
+# local rollback copies
+*.bak
+*.before-*
+# real job files and secrets (the repo only holds examples)
+*.param
+*.param_perl
+*.pass
+*.key
+*.log
