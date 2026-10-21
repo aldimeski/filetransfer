@@ -157,6 +157,15 @@ transferred, e.g.:
 
 ## Changelog
 
+### v0.11
+- SFTP: only regular files are transferred. `.`, `..`, directories and other special entries returned by
+  the server's directory listing are skipped (before, a mask such as `.*` made the script try to download
+  them and every one of them produced a `Couldn't read from remote file` error e-mail). Symlinks are
+  followed when they point to a regular file. Skipped directories are noted in the log; use `SubDirCheck:Y`
+  to process sub-directories.
+- The error e-mail now starts with the server the script ran on, the SFTP server and user (or "local
+  transfer"), the param file and the input/output directories. The subject ends with the host name.
+
 ### v0.10
 - A file is deleted from the input (`KeepInput:N`, also its control file) only after it was
   transferred completely to **every** output directory (and archived, when `ArchiveCheck:Y`).

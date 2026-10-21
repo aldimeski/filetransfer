@@ -3,6 +3,8 @@
 
 use strict						;
 #use warnings				;
+#v. 0.11 SFTP: only regular files are transferred (".", "..", directories and other special entries are skipped);
+#        the error e-mail names the server the script ran on and the SFTP server.
 #v. 0.10 Files are deleted from input only after a successful transfer; every copy/gzip/archive/delete
 #        error is logged and e-mailed (Notification:Y).
 #v. 0.09 Bugfixes (SFTP error check, date substr/len comparisons, printf format-string),
@@ -19,6 +21,10 @@ use Net::SFTP::Foreign	;
 use MIME::Lite				;
 use Date::Parse			;
 use DateTime				;
+use Sys::Hostname		;
+use Fcntl ':mode'		;
+
+my $script_version = '0.11';
 
 
 ########## Crontab Row; ##########
@@ -1113,6 +1119,8 @@ sub GetFilesRemote() {
 	foreach  my $sftp_file (@sftp_files) { 
 		foreach my $file (@$sftp_file){
 		
+			next if !IsRemoteRegularFile($sftp1,$InputDir,$file); # ls also returns ".", ".." and directories
+
 			if  ($file->{'filename'} =~ $FileMask ){				
 				if ( $FileDateCheck eq 'Y' && $between_dates_check != 0 ) {
 				
@@ -1316,6 +1324,48 @@ sub EpochToString() {
 	my ($sec,$min,$hour,$mday,$mon,$year) = localtime( $epoch );
 	return sprintf( "%04d-%02d-%02d %02d:%02d:%02d",
 		$year+1900, $mon+1, $mday, $hour, $min, $sec );
+
+}
+
+# True only for regular files. SFTP ls() also returns ".", ".." , directories and special entries;
+# symlinks are followed and accepted when they point to a regular file.
+sub IsRemoteRegularFile {
+
+	my $sftp1	= shift;
+	my $dir		= shift;
+	my $entry	= shift;
+
+	my $name = $entry->{'filename'};
+	return 0 if ( !defined $name || $name eq '' || $name eq '.' || $name eq '..' );
+
+	my $perm = $entry->{'a'}{'perm'};
+	if ( !defined $perm ){ # server sent no permissions, fall back to the ls -l style line
+		my $kind = substr( ( defined $entry->{'longname'} ? $entry->{'longname'} : '' ), 0, 1 );
+		return 1 if $kind eq '-';
+		if ( $kind ne 'l' ){
+			$lf->LoggerStringToFile( "Skipping $dir$name, it is not a regular file" ) if $kind eq 'd';
+			return 0;
+		}
+	}
+	elsif ( S_ISREG($perm) ){
+		return 1;
+	}
+	elsif ( S_ISDIR($perm) ){
+		$lf->LoggerStringToFile( "Skipping directory $dir$name (set SubDirCheck:Y to process sub-directories)" );
+		return 0;
+	}
+	elsif ( !S_ISLNK($perm) ){
+		$lf->LoggerStringToFile( "Skipping $dir$name, it is not a regular file" );
+		return 0;
+	}
+
+	# symlink: look at what it points to
+	my $target = $sftp1->stat( "$dir$name" );
+	if ( $target && defined $target->{'perm'} && S_ISREG( $target->{'perm'} ) ){
+		return 1;
+	}
+	$lf->LoggerStringToFile( "Skipping $dir$name, it is a symbolic link that does not point to a regular file" );
+	return 0;
 
 }
 
@@ -1625,11 +1675,18 @@ sub Notification() {
 
 	my @message				= @_; 
 
+	# which machine ran the script and, for SFTP jobs, which server it talked to
+	my $run_host	= hostname();
+	my $transfer	= ( defined $SftpCheck && $SftpCheck eq 'Y' )
+		? "SFTP from server ".$SftpHost." (user ".$SftpUser.")"
+		: "local transfer";
+	my $server_info = "Script ran on server: <b>$run_host</b><br>\n\tTransfer: $transfer<br>\n\tParam file: $param_file<br>\n\tInput dir: $InputDir; Output dir: $OutputDir<br>";
+
 	my  $msg = MIME::Lite->new(
         From    => $sender,
         To      => $recipient,
         Cc      => $cc_recipient,
-        Subject => "Automatic Mail from : File transfer with param $param_file",
+        Subject => "Automatic Mail from : File transfer with param $param_file on ".hostname(),
         Type    => 'multipart/mixed'
 		);
     $msg->attr('content-type.charset' => "utf-8");
@@ -1664,6 +1721,7 @@ sub Notification() {
 	<body>
 	Hi,<br>
 	This is an automatic notification from file_tran.pl  <br>
+	$server_info<br>
 	@message
 	<br>
 	Please do not replay if not needed. <br>
@@ -1671,7 +1729,7 @@ sub Notification() {
 file_tran.pl
 
 
-<p class=\"v1\"> v.0.01 </p>
+<p class=\"v1\"> v.$script_version </p>
 
 
 
